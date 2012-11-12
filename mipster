@@ -1,0 +1,58 @@
+#! /usr/bin/python3
+'''A lightweight MIPS assembler'''
+
+import argparse
+import os.path
+import io
+import re
+
+def main():
+  parser = argparse.ArgumentParser(description=__doc__)
+  parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.1')
+  parser.add_argument('asm', help='MIPS assembly input file', type=argparse.FileType('r'))
+  parser.add_argument('-o', '--out', 
+			metavar='HEX', 
+			help='Name of the output file', 
+			type=argparse.FileType('w'))
+  args = parser.parse_args()
+  
+  isa = get_mips_isa()
+  
+  if not args.out:
+    args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
+  
+  for line in args.asm:
+    if re.match('#', line):
+      continue
+    print(parse_cmd(line.strip()))
+    
+  args.asm.close();
+  args.out.close();
+
+# takes a string and breaks it into a command name and its arguments
+def parse_cmd(cmd):
+
+  cmd = re.sub(',', ' ', cmd) # handle commas
+  pc = re.split('\s+', cmd)
+  return pc
+  
+#add $d, $s, $t =0000 00ss ssst tttt dddd d000 0010 0000
+
+# validates a parsed command by checking it against the ISA
+#def validate_cmd(cmd, isa):
+  #for key in isa.keys():
+    #pat = re.sub(,,cmd)
+    #if re.match(, cmd):
+      #print('Match for ' + key)
+  
+  
+def get_mips_isa():
+  with open('mips_isa.txt','r') as f:
+    isa = {}
+    for line in f:
+      k, v = line.strip().split('=')
+      isa[k.strip()] = v.strip()
+  return isa
+  
+if __name__ == '__main__':
+  main()

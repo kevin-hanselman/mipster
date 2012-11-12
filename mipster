@@ -22,18 +22,18 @@ def main():
     args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
   
   for line in args.asm:
-    if re.match('#', line):
+    if re.match('#', line): # skip comment lines
       continue
-    print(parse_cmd(line.strip()))
+    print(parse_cmd(line.strip())) # strip newlines
     
   args.asm.close();
   args.out.close();
 
 # takes a string and breaks it into a command name and its arguments
 def parse_cmd(cmd):
-
+  cmd = re.sub('#.*','', cmd) # handle in-line comments
   cmd = re.sub(',', ' ', cmd) # handle commas
-  pc = re.split('\s+', cmd)
+  pc = re.split('\s+', cmd.strip())
   return pc
   
 #add $d, $s, $t =0000 00ss ssst tttt dddd d000 0010 0000

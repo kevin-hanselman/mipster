@@ -6,6 +6,7 @@ import os.path
 import io
 import re
 import collections
+import sys
 
 listeq = lambda x, y: collections.Counter(x) == collections.Counter(y)
 
@@ -41,7 +42,14 @@ def main():
 		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
 			continue
 		print('-'*15)
-		binstr = get_encoding(line.strip(), isa)
+		try:
+			binstr = get_encoding(line.strip(), isa)
+		except:
+			args.asm.close()
+			args.out.close()
+			os.remove(args.out.name)
+			raise
+			#sys.exit('Unexpected Error:' + str(sys.exc_info()[0]))
 		if binstr:
 			print(binstr)
 			hexstr = binstr2hexstr(binstr)
@@ -69,15 +77,18 @@ def parse_cmd(line, reg_replace=False):
 	line = re.sub('#.*', '', line) # handle in-line comments
 	line = re.sub(',', ' ', line) # handle commas
 	cmd = re.split('\s+', line.strip())
-	if reg_replace:
+	if reg_replace: # try to replace a named register with its numerical value
 		if len(cmd) != 1:
 			args = cmd[1:]
 			for i,a in enumerate(args):
-				#print(a)
+				#skip non-reg args and $0 to $31
+				if re.match('\$0*([0-9]|[12][0-9]|3[01])', a) or re.match('(?!\$)', a): 
+					#print('skipping \''+ a + '\'')
+					continue
 				try:
 					args[i] = '$' + str(regs.index(a))
 				except ValueError:
-					pass
+					raise #TODO: properly alert user to invalid named register
 			cmd[1:] = args
 	return cmd
 

@@ -9,7 +9,7 @@ url = 'http://www.mrc.uidaho.edu/mrc/people/jff/digital/MIPSir.html'
 page = urlopen(url)
 soup = BeautifulSoup(page) # scrape page
 
-cmds = soup.find_all(class_='MsoNormalTable') #scrape tables
+cmds = soup.find_all(class_='MsoNormalTable') # scrape tables
 
 # open the output file
 with open('mips_isa.txt', 'w') as f:

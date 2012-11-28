@@ -17,7 +17,7 @@ def main():
 						type=argparse.FileType('r'))
 	parser.add_argument('-o', '--out',
 						metavar='HEX',
-						help='Name of the output file',
+						help='name of the output file',
 						type=argparse.FileType('w'))
 	args = parser.parse_args()
 
@@ -30,13 +30,22 @@ def main():
 	for i, line in enumerate(args.asm):
 		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
 			continue
+		print('-'*15)
 		binstr = get_encoding(line.strip(), isa)
-		print(binstr)
+		if binstr:
+			print(binstr)
+			hexstr = binstr2hexstr(binstr)
+			print(hexstr)
+			args.out.write(hexstr + '\n')
 
 	args.asm.close()
 	args.out.close()
 
-
+def binstr2hexstr(binstr, hexdigs=8):
+	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:]	# form the hex number
+	return re.sub('\s', '0', hexstr)
+	
+	
 # takes a string and breaks it into a command name and its arguments
 def parse_cmd(line):
 	line = re.sub('#.*', '', line) # handle in-line comments
@@ -45,21 +54,20 @@ def parse_cmd(line):
 
 
 def parse_cmd_fmt(line):
-	line = re.sub('#.*', '', line) # handle in-line comments
-	line = re.sub(',', ' ', line) # handle commas
-	line = re.sub('\$\w+', '$', line) # register args indicated with just '$'
-	line = re.sub('(?!^)\s*\w+', 'i', line) # immediate values indicated with 'i'
-	return re.split('\s+', line.strip())
+	#line = re.sub('#.*', '', line) # handle in-line comments
+	#line = re.sub(',', ' ', line) # handle commas
+	#line = re.sub('\$\w+', '$', line) # register args indicated with just '$'
+	#line = re.sub('\w+(?=$)', 'i', line) # immediate values indicated with 'i'
+	#return re.split('\s+', line.strip())
+	fmt = parse_cmd(line)
+	if len(fmt) != 1:
+		args = fmt[1:]
+		for i,a in enumerate(args):
+			args[i] = re.sub('\$\w+', '$', a)
+			args[i] = re.sub('\w+', 'i', a)
+		fmt[1:] = args
+	return fmt
 
-
-# takes a command in the ISA and breaks it into a command name and its args
-# args:
-#	line = a line from the ISA text file
-# def parse_isa_cmd(line):
-	# line = re.split('=', line.strip())[0]
-	# return re.split(' ', line)
-
-# add $d $s $t=000000ssssstttttddddd00000100000
 
 # validates a parsed command by checking it against the ISA
 # args:
@@ -69,11 +77,11 @@ def parse_cmd_fmt(line):
 #	key-value tuple from ISA matching the ASM command
 def find_cmd(asm, isa):
 	cmd = parse_cmd_fmt(asm)
-	#print(cmd)
+	print(cmd)
 	for k,v in isa.items():
 		isa_cmd = parse_cmd_fmt(k)
 		if listeq(isa_cmd, cmd):
-			#print(isa_cmd)
+			print('%s -> %s' % (k,v))
 			return (k,v)
 	return (None, None)
 
@@ -89,23 +97,25 @@ def get_encoding(asm, isa):
 	if isa_key:
 		isa_cmd = parse_cmd(isa_key)
 		asm_cmd = parse_cmd(asm)
+		print(asm_cmd)
+		print(binstr)
 	else:
 		print('Command not found: ' + asm)
 		return None
 	for asm_arg, isa_arg in zip(asm_cmd[1:], isa_cmd[1:]):
-		#print(asm_arg + '\t' + isa_arg)
 		binstr = put_arg(re.sub('\$', '', asm_arg), 
-						isa_arg, 
+						re.sub('\$', '', isa_arg), 
 						binstr)
 	return binstr
 	
 
 def put_arg(val, sym, binstr):
-	#print('%s\t%s' % (val, sym))
 	n = binstr.count(sym)	# get the length of the binary number 
 	substr = str('%'+str(n)+'s') % bin(int(val))[2:]	# form the binary number
 	substr = re.sub('\s', '0', substr)
+	print('%s\t%s\t%s' % (val, sym, substr))
 	return re.sub(sym + '+', substr, binstr)
+
 
 def get_mips_isa():
 	with open('mips_isa.txt', 'r') as f:

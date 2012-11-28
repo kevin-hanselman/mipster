@@ -41,7 +41,7 @@ def main():
 	for i, line in enumerate(args.asm):
 		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
 			continue
-		print('-'*15)
+		print('-'*24)
 		try:
 			binstr = get_encoding(line.strip(), isa)
 		except:
@@ -67,15 +67,16 @@ def main():
 	args.asm.close()
 	args.out.close()
 
+
 def binstr2hexstr(binstr, hexdigs=8):
 	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:]	# form the hex number
 	return re.sub('\s', '0', hexstr)
-	
-	
+
+
 # takes a string and breaks it into a command name and its arguments
 def parse_cmd(line, reg_replace=False):
 	line = re.sub('#.*', '', line) # handle in-line comments
-	line = re.sub(',', ' ', line) # handle commas
+	line = re.sub('[,\(\)]', ' ', line) # handle commas and parens
 	cmd = re.split('\s+', line.strip())
 	if reg_replace: # try to replace a named register with its numerical value
 		if len(cmd) != 1:
@@ -104,18 +105,21 @@ def parse_cmd_fmt(line):
 		args = fmt[1:]
 		for i,a in enumerate(args):
 			args[i] = re.sub('\$\w+', '$', a)
-			args[i] = re.sub('\w+', 'i', a) # immediate values indicated with 'i'
+			args[i] = re.sub('[\w\-]+', 'i', a) # immediate values indicated with 'i'
 		fmt[1:] = args
 	return fmt
 
 
-# validates a parsed command by checking it against the ISA
-# args:
-#	asm = unparsed line from ASM file
-#	isa = the ISA dictionary
-# returns:
-#	key-value tuple from ISA matching the ASM command
+
 def find_cmd(asm, isa):
+	'''
+	validates a parsed command by checking it against the ISA
+	args:
+		asm = unparsed line from ASM file
+		isa = the ISA dictionary
+	returns:
+		key-value tuple from ISA matching the ASM command
+	'''
 	cmd = parse_cmd_fmt(asm)
 	for k,v in isa.items():
 		isa_cmd = parse_cmd_fmt(k)
@@ -125,17 +129,19 @@ def find_cmd(asm, isa):
 	return (None, None)
 
 
-# returns the hex encoding for the given ASM line, if possible
-# args:
-#	asm = unparsed line from ASM file
-#	isa = the ISA dict
-# returns:
-#	string representing the hexadecimal encoding of the ASM line
 def get_encoding(asm, isa):
+	'''
+	returns the hex encoding for the given ASM line, if possible
+	args:
+		asm = unparsed line from ASM file
+		isa = the ISA dict
+	returns:
+		string representing the binary encoding of the ASM line
+	'''
 	isa_key, binstr = find_cmd(asm, isa)
 	if isa_key:
 		isa_cmd = parse_cmd(isa_key)
-		asm_cmd = parse_cmd(asm, True)
+		asm_cmd = parse_cmd(asm, reg_replace=True)
 		print(asm_cmd)
 		#print(binstr)
 	else:
@@ -149,13 +155,28 @@ def get_encoding(asm, isa):
 
 
 def put_arg(val, sym, binstr):
-	n = binstr.count(sym)	# get the length of the binary number 
-	substr = str('%'+str(n)+'s') % bin(int(val))[2:]	# form the binary number
-	substr = re.sub('\s', '0', substr)
-	print('%s\t%s\t%s' % (val, sym, substr))
-	return re.sub(sym + '+', substr, binstr)
+	n = binstr.count(sym)	# get the length of the binary number
+	b = int2twoscomp(int(val), n)
+	print('%s\t%s\t%s' % (val, sym, b))
+	return re.sub(sym + '+', b, binstr)
 
 
+def int2twoscomp(val, nbits):
+	b = bin(abs(val))[2:]
+	b = str('%'+str(nbits)+'s') % b
+	b = re.sub('\s', '0', b)
+	print(b)
+	if val < 0:
+		b = twoscomp(b)
+	return b
+
+
+def onescomp(binstr):
+    return ''.join('1' if b=='0' else '0' for b in binstr)
+
+def twoscomp(binstr):
+    return bin(int(onescomp(binstr),2)+1)[2:]
+    
 def get_mips_isa():
 	with open('mips_isa.txt', 'r') as f:
 		isa = {}

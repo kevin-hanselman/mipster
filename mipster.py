@@ -9,6 +9,13 @@ import collections
 
 listeq = lambda x, y: collections.Counter(x) == collections.Counter(y)
 
+regs = (
+	'$zero','$at','$v0','$v1','$a0','$a1','$a2','$a3',
+	'$t0','$t1','$t2','$t3','$t4','$t5','$t6','$t7',
+	'$s0','$s1','$s2','$s3','$s4','$s5','$s6','$s7',
+	'$t8','$t9','$k0','$k1','$gp','$sp','$fp','$ra'
+)
+
 def main():
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument('-v', '--version', action='version', 
@@ -19,10 +26,13 @@ def main():
 						metavar='HEX',
 						help='name of the output file',
 						type=argparse.FileType('w'))
+#	parser.add_argument('-c', metavar='MARS',
+#						help='compare output to MARS hex file',
+#						type=argparse.FileType('r'))
 	args = parser.parse_args()
 
 	isa = get_mips_isa() # make a dictionary of ISA commands and their encodings
-
+	
 	# form the output file if not supplied
 	if not args.out:
 		args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
@@ -38,6 +48,14 @@ def main():
 			print(hexstr)
 			args.out.write(hexstr + '\n')
 
+	#if args.c:
+		#print(args.c.name)
+		#print(args.out.name)
+		#if filecmp.cmp(args.c.name, args.out.name, shallow=True):
+			#print('Files are identical')
+		#else:
+			#print('Files differ')
+			
 	args.asm.close()
 	args.out.close()
 
@@ -47,10 +65,21 @@ def binstr2hexstr(binstr, hexdigs=8):
 	
 	
 # takes a string and breaks it into a command name and its arguments
-def parse_cmd(line):
+def parse_cmd(line, reg_replace=False):
 	line = re.sub('#.*', '', line) # handle in-line comments
 	line = re.sub(',', ' ', line) # handle commas
-	return re.split('\s+', line.strip())
+	cmd = re.split('\s+', line.strip())
+	if reg_replace:
+		if len(cmd) != 1:
+			args = cmd[1:]
+			for i,a in enumerate(args):
+				#print(a)
+				try:
+					args[i] = '$' + str(regs.index(a))
+				except ValueError:
+					pass
+			cmd[1:] = args
+	return cmd
 
 
 def parse_cmd_fmt(line):
@@ -64,7 +93,7 @@ def parse_cmd_fmt(line):
 		args = fmt[1:]
 		for i,a in enumerate(args):
 			args[i] = re.sub('\$\w+', '$', a)
-			args[i] = re.sub('\w+', 'i', a)
+			args[i] = re.sub('\w+', 'i', a) # immediate values indicated with 'i'
 		fmt[1:] = args
 	return fmt
 
@@ -77,11 +106,10 @@ def parse_cmd_fmt(line):
 #	key-value tuple from ISA matching the ASM command
 def find_cmd(asm, isa):
 	cmd = parse_cmd_fmt(asm)
-	print(cmd)
 	for k,v in isa.items():
 		isa_cmd = parse_cmd_fmt(k)
 		if listeq(isa_cmd, cmd):
-			print('%s -> %s' % (k,v))
+			print('find_cmd(): %s -> %s' % (k,v))
 			return (k,v)
 	return (None, None)
 
@@ -96,9 +124,9 @@ def get_encoding(asm, isa):
 	isa_key, binstr = find_cmd(asm, isa)
 	if isa_key:
 		isa_cmd = parse_cmd(isa_key)
-		asm_cmd = parse_cmd(asm)
+		asm_cmd = parse_cmd(asm, True)
 		print(asm_cmd)
-		print(binstr)
+		#print(binstr)
 	else:
 		print('Command not found: ' + asm)
 		return None
@@ -106,8 +134,8 @@ def get_encoding(asm, isa):
 		binstr = put_arg(re.sub('\$', '', asm_arg), 
 						re.sub('\$', '', isa_arg), 
 						binstr)
-	return binstr
-	
+	return re.sub('-', '0', binstr) # replace don't cares ('-') with zeros
+
 
 def put_arg(val, sym, binstr):
 	n = binstr.count(sym)	# get the length of the binary number 

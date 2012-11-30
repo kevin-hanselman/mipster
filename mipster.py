@@ -19,9 +19,15 @@ regs = (
 	'$t8','$t9','$k0','$k1','$gp','$sp','$fp','$ra'
 )
 
+class ASMError(Exception):
+	def __init__(self, value):
+		self.value = value
+	def __str__(self):
+		return str(self.value)
+
 def main():
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument('-v', '--version', action='version', 
+	parser.add_argument('-v', '--version', action='version',
 						version='%(prog)s 0.1')
 	parser.add_argument('asm',	help='MIPS assembly input file',
 						type=argparse.FileType('r'))
@@ -35,29 +41,47 @@ def main():
 	args = parser.parse_args()
 
 	isa = get_mips_isa() # make a dictionary of ISA commands and their encodings
-	
+
 	# form the output file if not supplied
 	if not args.out:
 		args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
 
-	for i, line in enumerate(args.asm):
+	# generate labels
+	labels = []
+	for line in args.asm:
 		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
 			continue
-		print('-'*24) if debug else None
+		m = re.match('\s*\w+(?=:)', line)
+		labels.append(m.group(0) if m else None)
+	print(labels)
+	#return
+	args.asm.seek(0)
+	
+	j = 0
+	for i, line in enumerate(args.asm):
+		# skip comments and blank lines
+		if re.match('\s*[#\n\r]', line) or re.match('\s*\w+(?=:)\s*$', line): 
+			continue
+		
+		print('i=%d j=%d'%(i,j) + '-'*24) if debug else None
 		try:
 			binstr = get_encoding(line.strip(), isa)
-		except:
+		except Exception as ex:
 			args.asm.close()
 			args.out.close()
 			os.remove(args.out.name)
-			raise
+			if isinstance(ex, ASMError):
+				print(ex)
+				return
+			else:
+				raise
 			#sys.exit('Unexpected Error:' + str(sys.exc_info()[0]))
 		if binstr:
-			print(binstr)  if debug else None
 			hexstr = binstr2hexstr(binstr)
-			print(hexstr)  if debug else None
+			print('%s -> %s' % (hexstr, binstr)) if debug else None
 			args.out.write(hexstr + '\n')
 
+		j += 1
 	#if args.c:
 		#print(args.c.name)
 		#print(args.out.name)
@@ -65,18 +89,17 @@ def main():
 			#print('Files are identical')
 		#else:
 			#print('Files differ')
-			
+
 	args.asm.close()
 	args.out.close()
-
-
+	
 def binstr2hexstr(binstr, hexdigs=8):
 	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:]	# form the hex number
 	return re.sub('\s', '0', hexstr)
 
-
-# takes a string and breaks it into a command name and its arguments
 def parse_cmd(line, reg_replace=False):
+	'''takes a string and breaks it into a command name and its arguments'''
+	line = re.sub('^\w+:', '', line)
 	line = re.sub('#.*', '', line) # handle in-line comments
 	line = re.sub('[,\(\)]', ' ', line) # handle commas and parens
 	cmd = re.split('\s+', line.strip())
@@ -85,7 +108,7 @@ def parse_cmd(line, reg_replace=False):
 			args = cmd[1:]
 			for i,a in enumerate(args):
 				#skip non-reg args and $0 to $31
-				if re.match('\$0*([0-9]|[12][0-9]|3[01])', a) or re.match('(?!\$)', a): 
+				if re.match('\$0*([0-9]|[12][0-9]|3[01])', a) or re.match('(?!\$)', a):
 					#print('skipping \''+ a + '\'')
 					continue
 				try:
@@ -94,7 +117,6 @@ def parse_cmd(line, reg_replace=False):
 					raise #TODO: properly alert user to invalid named register
 			cmd[1:] = args
 	return cmd
-
 
 def parse_cmd_fmt(line):
 	#line = re.sub('#.*', '', line) # handle in-line comments
@@ -110,8 +132,6 @@ def parse_cmd_fmt(line):
 			args[i] = re.sub('[\w\-]+', 'i', a) # immediate values indicated with 'i'
 		fmt[1:] = args
 	return fmt
-
-
 
 def find_cmd(asm, isa):
 	'''
@@ -130,7 +150,6 @@ def find_cmd(asm, isa):
 			return (k,v)
 	return (None, None)
 
-
 def get_encoding(asm, isa):
 	'''
 	returns the hex encoding for the given ASM line, if possible
@@ -147,21 +166,21 @@ def get_encoding(asm, isa):
 		print(asm_cmd)  if debug else None
 		#print(binstr)
 	else:
-		print('Command not found: ' + asm)
-		return None
+		raise ASMError('Command not found: ' + asm)
+		#print('Command not found: ' + asm)
+		#return None
 	for asm_arg, isa_arg in zip(asm_cmd[1:], isa_cmd[1:]):
-		binstr = put_arg(re.sub('\$', '', asm_arg), 
-						re.sub('\$', '', isa_arg), 
+		binstr = put_arg(re.sub('\$', '', asm_arg),
+						re.sub('\$', '', isa_arg),
 						binstr)
 	return re.sub('-', '0', binstr) # replace don't cares ('-') with zeros
-
+	
 
 def put_arg(val, sym, binstr):
 	n = binstr.count(sym)	# get the length of the binary number
 	b = int2twoscomp(int(val), n)
 	print('%s\t%s\t%s' % (val, sym, b))  if debug else None
 	return re.sub(sym + '+', b, binstr)
-
 
 def int2twoscomp(val, nbits):
 	b = bin(abs(val))[2:]
@@ -172,13 +191,12 @@ def int2twoscomp(val, nbits):
 		b = twoscomp(b)
 	return b
 
-
 def onescomp(binstr):
     return ''.join('1' if b=='0' else '0' for b in binstr)
 
 def twoscomp(binstr):
     return bin(int(onescomp(binstr),2)+1)[2:]
-    
+
 def get_mips_isa():
 	with open('mips_isa.txt', 'r') as f:
 		isa = {}

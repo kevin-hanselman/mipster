@@ -8,6 +8,8 @@ import re
 import collections
 import sys
 
+debug = True
+
 listeq = lambda x, y: collections.Counter(x) == collections.Counter(y)
 
 regs = (
@@ -41,7 +43,7 @@ def main():
 	for i, line in enumerate(args.asm):
 		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
 			continue
-		print('-'*24)
+		print('-'*24) if debug else None
 		try:
 			binstr = get_encoding(line.strip(), isa)
 		except:
@@ -51,9 +53,9 @@ def main():
 			raise
 			#sys.exit('Unexpected Error:' + str(sys.exc_info()[0]))
 		if binstr:
-			print(binstr)
+			print(binstr)  if debug else None
 			hexstr = binstr2hexstr(binstr)
-			print(hexstr)
+			print(hexstr)  if debug else None
 			args.out.write(hexstr + '\n')
 
 	#if args.c:
@@ -124,7 +126,7 @@ def find_cmd(asm, isa):
 	for k,v in isa.items():
 		isa_cmd = parse_cmd_fmt(k)
 		if listeq(isa_cmd, cmd):
-			print('find_cmd(): %s -> %s' % (k,v))
+			print('find_cmd(): %s -> %s' % (k,v))  if debug else None
 			return (k,v)
 	return (None, None)
 
@@ -142,7 +144,7 @@ def get_encoding(asm, isa):
 	if isa_key:
 		isa_cmd = parse_cmd(isa_key)
 		asm_cmd = parse_cmd(asm, reg_replace=True)
-		print(asm_cmd)
+		print(asm_cmd)  if debug else None
 		#print(binstr)
 	else:
 		print('Command not found: ' + asm)
@@ -157,7 +159,7 @@ def get_encoding(asm, isa):
 def put_arg(val, sym, binstr):
 	n = binstr.count(sym)	# get the length of the binary number
 	b = int2twoscomp(int(val), n)
-	print('%s\t%s\t%s' % (val, sym, b))
+	print('%s\t%s\t%s' % (val, sym, b))  if debug else None
 	return re.sub(sym + '+', b, binstr)
 
 
@@ -165,7 +167,7 @@ def int2twoscomp(val, nbits):
 	b = bin(abs(val))[2:]
 	b = str('%'+str(nbits)+'s') % b
 	b = re.sub('\s', '0', b)
-	print(b)
+	#print(b)  if debug else None
 	if val < 0:
 		b = twoscomp(b)
 	return b
@@ -181,6 +183,8 @@ def get_mips_isa():
 	with open('mips_isa.txt', 'r') as f:
 		isa = {}
 		for line in f:
+			if re.match('\s*[#\n\r]', line): # skip comments and blank lines
+				continue
 			k, v = line.strip().split('=')
 			isa[k.strip()] = v.strip()
 	return isa

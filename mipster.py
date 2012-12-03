@@ -10,6 +10,11 @@ import sys
 
 debug = True
 
+text_start_addr = 0x00400000
+data_start_addr = 0x10010000
+
+labels = [] # holds each label in the ASM file, indexed by line number
+
 listeq = lambda x, y: collections.Counter(x) == collections.Counter(y)
 
 regs = (
@@ -47,31 +52,46 @@ def main():
 		args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
 
 	# generate labels
-	labels = []
+	skip = False
 	for line in args.asm:
-		if re.match('\s*[#\n\r]', line): # skip comments and blank lines
+		line = line.strip()
+		if re.match('(?:#.*)?$', line): # skip comments and blank lines
+			#print('skipping %r' % line) if debug else None
 			continue
-		m = re.match('\s*\w+(?=:)', line)
-		labels.append(m.group(0) if m else None)
-	print(labels)
+		if skip:
+			skip = False
+			continue
+		m = re.match('(\w+):($)?', line)
+		if m:
+			labels.append(m.group(1))
+			if m.group(2) is None: # if no match, label has text on same line
+				skip = False
+			elif not m.group(2): # if matched EOL, label goes w/ next line, skip
+				skip = True
+			#print('skip= %r' % skip) if debug else None
+		else:
+			skip = False
+			labels.append(None)
+	print(labels) if debug else None
 	#return
 	args.asm.seek(0)
-	
+
+	# create hex output
 	j = 0
 	for i, line in enumerate(args.asm):
-		# skip comments and blank lines
-		if re.match('\s*[#\n\r]', line) or re.match('\s*\w+(?=:)\s*$', line): 
+		line = line.strip()
+		# skip comments, blank lines, and lone labels
+		if re.match('(?:#.*)?$', line) or re.match('\w+:$', line):
 			continue
-		
-		print('i=%d j=%d'%(i,j) + '-'*24) if debug else None
+		print('i=%d j=%d '%(i,j) + '-'*70) if debug else None
 		try:
-			binstr = get_encoding(line.strip(), isa)
+			binstr = get_encoding(line, j, isa)
 		except Exception as ex:
 			args.asm.close()
 			args.out.close()
 			os.remove(args.out.name)
 			if isinstance(ex, ASMError):
-				print(ex)
+				print('%s [line %d]: %s' % (args.asm.name, i+1, ex))
 				return
 			else:
 				raise
@@ -80,7 +100,6 @@ def main():
 			hexstr = binstr2hexstr(binstr)
 			print('%s -> %s' % (hexstr, binstr)) if debug else None
 			args.out.write(hexstr + '\n')
-
 		j += 1
 	#if args.c:
 		#print(args.c.name)
@@ -92,32 +111,51 @@ def main():
 
 	args.asm.close()
 	args.out.close()
+	print('Assembler successful!')
 	
 def binstr2hexstr(binstr, hexdigs=8):
-	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:]	# form the hex number
+	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:] # form the hex number
 	return re.sub('\s', '0', hexstr)
 
-def parse_cmd(line, reg_replace=False):
+def int2hexstr(i, hexdigs=8):
+	hexstr = str('%'+str(hexdigs)+'s') % hex(i)[2:] # form the hex number
+	return re.sub('\s', '0', hexstr)
+
+def translate_cmd(line, linenum):
+	cmd = parse_cmd(line)
+	if len(cmd) > 1:
+		args = cmd[1:]
+		for i,a in enumerate(args):
+			# skip $0 to $31 and non-register numeric arguments
+			if re.match('\$0*([0-9]|[12][0-9]|3[01])$', a) or re.match('(?!\$)\d+', a):
+				continue
+			elif re.match('(?!\$)\w+', a): # if alphanumeric string, treat as label
+				try:
+					li = labels.index(a)
+					#print('label index= %r' % repr(li))
+				except ValueError:
+					raise ASMError('Label %r not found' % a)
+				if re.match('j', cmd[0]): # jump uses a direct address
+					# index * number of bytes per instruction + starting address
+					# right shift 2 bits to fit in 26-bit 'pseudo address'
+					args[i] = str(int((li*4+text_start_addr)/4))
+				elif re.match('b', cmd[0]): # branch uses an offset
+					args[i] = str(li - linenum - 1)
+			else:
+				try:
+					args[i] = '$' + str(regs.index(a))
+				except ValueError:
+					raise ASMError('Invalid register %r' % a)
+		cmd[1:] = args
+	return cmd
+
+def parse_cmd(line):
 	'''takes a string and breaks it into a command name and its arguments'''
 	line = re.sub('^\w+:', '', line)
 	line = re.sub('#.*', '', line) # handle in-line comments
 	line = re.sub('[,\(\)]', ' ', line) # handle commas and parens
-	cmd = re.split('\s+', line.strip())
-	if reg_replace: # try to replace a named register with its numerical value
-		if len(cmd) != 1:
-			args = cmd[1:]
-			for i,a in enumerate(args):
-				#skip non-reg args and $0 to $31
-				if re.match('\$0*([0-9]|[12][0-9]|3[01])', a) or re.match('(?!\$)', a):
-					#print('skipping \''+ a + '\'')
-					continue
-				try:
-					args[i] = '$' + str(regs.index(a))
-				except ValueError:
-					raise #TODO: properly alert user to invalid named register
-			cmd[1:] = args
-	return cmd
-
+	return re.split('\s+', line.strip())
+	
 def parse_cmd_fmt(line):
 	#line = re.sub('#.*', '', line) # handle in-line comments
 	#line = re.sub(',', ' ', line) # handle commas
@@ -150,7 +188,7 @@ def find_cmd(asm, isa):
 			return (k,v)
 	return (None, None)
 
-def get_encoding(asm, isa):
+def get_encoding(asm, linenum, isa):
 	'''
 	returns the hex encoding for the given ASM line, if possible
 	args:
@@ -162,7 +200,7 @@ def get_encoding(asm, isa):
 	isa_key, binstr = find_cmd(asm, isa)
 	if isa_key:
 		isa_cmd = parse_cmd(isa_key)
-		asm_cmd = parse_cmd(asm, reg_replace=True)
+		asm_cmd = translate_cmd(asm, linenum)
 		print(asm_cmd)  if debug else None
 		#print(binstr)
 	else:
@@ -174,13 +212,17 @@ def get_encoding(asm, isa):
 						re.sub('\$', '', isa_arg),
 						binstr)
 	return re.sub('-', '0', binstr) # replace don't cares ('-') with zeros
-	
 
 def put_arg(val, sym, binstr):
+	#print('val=%r\tsym=%r\tbinstr=%r' % (val,sym,binstr))
 	n = binstr.count(sym)	# get the length of the binary number
+	if not n:
+		raise ASMError('DEV: put_arg(): sym %r not found' % sym)
 	b = int2twoscomp(int(val), n)
 	print('%s\t%s\t%s' % (val, sym, b))  if debug else None
-	return re.sub(sym + '+', b, binstr)
+	out = re.sub(sym + '+', b, binstr)
+	#print(out)
+	return out
 
 def int2twoscomp(val, nbits):
 	b = bin(abs(val))[2:]

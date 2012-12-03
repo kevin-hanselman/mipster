@@ -1,5 +1,9 @@
 #! /usr/bin/python3
-'''A lightweight MIPS assembler'''
+'''
+A lightweight MIPS assembler
+
+[Author: Kevin Hanselman]
+'''
 
 import argparse
 import os.path
@@ -8,12 +12,11 @@ import re
 import collections
 import sys
 
-debug = True
+text_start_addr = 0x00400000 # starting address for the .text segment
+data_start_addr = 0x10010000 # starting address for the .data segment
 
-text_start_addr = 0x00400000
-data_start_addr = 0x10010000
-
-labels = [] # holds each label in the ASM file, indexed by line number
+data_labels = [] # holds each label in the .data segment of ASM file, indexed by line number
+text_labels = [] # holds each label in the .text segment of ASM file, indexed by line number
 
 listeq = lambda x, y: collections.Counter(x) == collections.Counter(y)
 
@@ -31,9 +34,12 @@ class ASMError(Exception):
 		return str(self.value)
 
 def main():
+	global debug
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument('-v', '--version', action='version',
-						version='%(prog)s 0.1')
+						version='%(prog)s 0.2')
+	parser.add_argument('-d', '--debug', action='store_true',
+						help='output debug information')
 	parser.add_argument('asm',	help='MIPS assembly input file',
 						type=argparse.FileType('r'))
 	parser.add_argument('-o', '--out',
@@ -45,6 +51,8 @@ def main():
 #						type=argparse.FileType('r'))
 	args = parser.parse_args()
 
+	debug = args.debug
+	
 	isa = get_mips_isa() # make a dictionary of ISA commands and their encodings
 
 	# form the output file if not supplied
@@ -63,7 +71,7 @@ def main():
 			continue
 		m = re.match('(\w+):($)?', line)
 		if m:
-			labels.append(m.group(1))
+			text_labels.append(m.group(1))
 			if m.group(2) is None: # if no match, label has text on same line
 				skip = False
 			elif not m.group(2): # if matched EOL, label goes w/ next line, skip
@@ -71,13 +79,13 @@ def main():
 			#print('skip= %r' % skip) if debug else None
 		else:
 			skip = False
-			labels.append(None)
-	print(labels) if debug else None
-	#return
+			text_labels.append(None)
+	print(text_labels) if debug else None
+
 	args.asm.seek(0)
 
 	# create hex output
-	j = 0
+	j = 0 # ASM command index/line number
 	for i, line in enumerate(args.asm):
 		line = line.strip()
 		# skip comments, blank lines, and lone labels
@@ -131,7 +139,7 @@ def translate_cmd(line, linenum):
 				continue
 			elif re.match('(?!\$)\w+', a): # if alphanumeric string, treat as label
 				try:
-					li = labels.index(a)
+					li = text_labels.index(a)
 					#print('label index= %r' % repr(li))
 				except ValueError:
 					raise ASMError('Label %r not found' % a)
@@ -172,6 +180,7 @@ def parse_cmd_fmt(line):
 	return fmt
 
 def find_cmd(asm, isa):
+	global debug
 	'''
 	validates a parsed command by checking it against the ISA
 	args:
@@ -189,6 +198,7 @@ def find_cmd(asm, isa):
 	return (None, None)
 
 def get_encoding(asm, linenum, isa):
+	global debug
 	'''
 	returns the hex encoding for the given ASM line, if possible
 	args:
@@ -214,6 +224,7 @@ def get_encoding(asm, linenum, isa):
 	return re.sub('-', '0', binstr) # replace don't cares ('-') with zeros
 
 def put_arg(val, sym, binstr):
+	global debug
 	#print('val=%r\tsym=%r\tbinstr=%r' % (val,sym,binstr))
 	n = binstr.count(sym)	# get the length of the binary number
 	if not n:
@@ -225,6 +236,7 @@ def put_arg(val, sym, binstr):
 	return out
 
 def int2twoscomp(val, nbits):
+	global debug
 	b = bin(abs(val))[2:]
 	b = str('%'+str(nbits)+'s') % b
 	b = re.sub('\s', '0', b)

@@ -11,9 +11,10 @@ import io
 import re
 import collections
 import sys
+import tempfile
 
 text_start_addr = 0x00400000 # starting address for the .text segment
-data_start_addr = 0x10010000 # starting address for the .data segment
+data_start_addr = 0x00001001 # starting address for the .data segment
 
 data_labels = [] # holds each label in the .data segment of ASM file, indexed by line number
 text_labels = [] # holds each label in the .text segment of ASM file, indexed by line number
@@ -50,46 +51,46 @@ def main():
 #						help='compare output to MARS hex file',
 #						type=argparse.FileType('r'))
 	args = parser.parse_args()
-
 	debug = args.debug
-	
 	isa = get_mips_isa() # make a dictionary of ISA commands and their encodings
 
 	# form the output file if not supplied
 	if not args.out:
 		args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
-
-	# generate labels
-	skip = False
-	for line in args.asm:
-		line = line.strip()
-		if re.match('(?:#.*)?$', line): # skip comments and blank lines
-			#print('skipping %r' % line) if debug else None
-			continue
-		if skip:
-			skip = False
-			continue
-		m = re.match('(\w+):($)?', line)
-		if m:
-			text_labels.append(m.group(1))
-			if m.group(2) is None: # if no match, label has text on same line
-				skip = False
-			elif not m.group(2): # if matched EOL, label goes w/ next line, skip
-				skip = True
-			#print('skip= %r' % skip) if debug else None
-		else:
-			skip = False
-			text_labels.append(None)
-	print(text_labels) if debug else None
-
-	args.asm.seek(0)
+	
+	#tmp = tempfile.NamedTemporaryFile('r+', delete=False)
+	tmp = open(os.path.splitext(args.asm.name)[0] + '.tmp', 'w+')
+	
+	try:
+		asm2basic(args.asm, tmp, isa)
+		tmp.seek(0)
+		get_labels(tmp)
+	except ASMError as ex:
+		args.asm.close()
+		args.out.close()
+		tmp.close()
+		#os.remove(tmp.name)
+		os.remove(args.out.name)
+		print(ex)
+		return
+	
+	#return
+	tmp.seek(0)
 
 	# create hex output
 	j = 0 # ASM command index/line number
-	for i, line in enumerate(args.asm):
+	data = False
+	for i, line in enumerate(tmp):
 		line = line.strip()
-		# skip comments, blank lines, and lone labels
-		if re.match('(?:#.*)?$', line) or re.match('\w+:$', line):
+		if re.match('\.data', line):
+			data = True
+		if re.match('\.text', line):
+			data = False
+		# skip comments, blank lines, lone labels, and headers
+		if re.match('(?:#.*)?$', line) \
+			or re.match('\w+:\s*(?:#.*)?$', line) \
+			or re.match('\.\w+', line) \
+			or data:
 			continue
 		print('i=%d j=%d '%(i,j) + '-'*70) if debug else None
 		try:
@@ -97,9 +98,11 @@ def main():
 		except Exception as ex:
 			args.asm.close()
 			args.out.close()
+			tmp.close()
+			#os.remove(tmp.name)
 			os.remove(args.out.name)
 			if isinstance(ex, ASMError):
-				print('%s [line %d]: %s' % (args.asm.name, i+1, ex))
+				print(ex)
 				return
 			else:
 				raise
@@ -109,18 +112,95 @@ def main():
 			print('%s -> %s' % (hexstr, binstr)) if debug else None
 			args.out.write(hexstr + '\n')
 		j += 1
-	#if args.c:
-		#print(args.c.name)
-		#print(args.out.name)
-		#if filecmp.cmp(args.c.name, args.out.name, shallow=True):
-			#print('Files are identical')
-		#else:
-			#print('Files differ')
-
 	args.asm.close()
 	args.out.close()
+	tmp.close()
+	#os.remove(tmp.name)
 	print('Assembler successful!')
-	
+
+def asm2basic(infile, outfile, isa):
+	text = False
+	for i, line in enumerate(infile):
+		line = clean_line(line)
+		if re.match('(?:#.*)?$', line): # skip comments and blank lines
+			#print('skipping %r' % line) if debug else None
+			continue
+		m = re.match('\.\w+', line)
+		if m:
+			text = m.group(0) == '.text'
+			#continue
+		if text:
+			isa_key, isa_val = find_cmd(line, isa)
+			if isa_val:
+				if re.match('[^01]', isa_val):
+					cmds = pseudo2real(line, isa_key, isa_val)
+					print(cmds) if debug else None
+					for c in cmds:
+						outfile.write(c + '\n')
+					continue
+				#else:
+					#outfile.write(' '.join(parse_cmd(line)) + '\n')
+					#continue
+		outfile.write(line + '\n')
+			#else:
+				#raise ASMError('Command %r not found' % line)
+
+def get_labels(infile):
+	skip = False
+	text = False
+	data = False
+	for i, line in enumerate(infile):
+		line = clean_line(line)
+		if re.match('(?:#.*)?$', line): # skip comments and blank lines
+			#print('skipping %r' % line) if debug else None
+			continue
+		m = re.match('\.\w+', line)
+		if m:
+			if m.group(0) == '.text':
+				text = True
+				data = False
+			elif m.group(0) == '.data':
+				data = True
+				text = False
+			continue
+		if skip:
+			skip = False
+			continue
+		m = re.match('(\w+):($)?', line)
+		if m:
+			if m.group(2) is None: # if no match, label has text on same line
+				skip = False
+			elif not m.group(2): # if matched EOL, label goes w/ next line, skip
+				skip = True
+			#print('skip= %r' % skip) if debug else None
+			if data:
+				data_labels.append(m.group(1))
+				# add Nones for each data element
+				data_labels.extend([None for x in re.split('\s+', line)[3:] if x])
+			else: # default to .text segment, even if not explicitly declared
+				text_labels.append(m.group(1))
+		else:
+			if data:
+				data_labels.append(None)
+			else: # default to .text segment, even if not explicitly declared
+				text_labels.append(None)
+	print('text_labels = %r\ndata_labels = %r' % (text_labels, data_labels)) if debug else None
+
+def pseudo2real(asm, isa_key, isa_val):
+	#isa_cmds = list of strings, each representing an ASM command
+	asm_cmd = parse_cmd(asm)
+	pseudo_cmd = parse_cmd(isa_key)
+	isa_cmds = [parse_cmd(x) for x in re.split(';', isa_val)]
+
+	# loop through real instructions
+	for i, isa_cmd in enumerate(isa_cmds):
+		# loop through arguments
+		for asm_arg, pseudo_arg in zip(asm_cmd[1:], pseudo_cmd[1:]):
+			if pseudo_arg in isa_cmd[1:]:
+				arg_idx = isa_cmd[1:].index(pseudo_arg) + 1
+				isa_cmds[i][arg_idx] = asm_arg
+	return [' '.join(x) for x in isa_cmds]
+
 def binstr2hexstr(binstr, hexdigs=8):
 	hexstr = str('%'+str(hexdigs)+'s') % hex(int(binstr, 2))[2:] # form the hex number
 	return re.sub('\s', '0', hexstr)
@@ -137,18 +217,36 @@ def translate_cmd(line, linenum):
 			# skip $0 to $31 and non-register numeric arguments
 			if re.match('\$0*([0-9]|[12][0-9]|3[01])$', a) or re.match('(?!\$)\d+', a):
 				continue
+			if re.match('(?!\$)-?\d+', a): # immediate value
+				continue
+			if re.match('D', a):
+				args[i] = str(data_start_addr)
 			elif re.match('(?!\$)\w+', a): # if alphanumeric string, treat as label
-				try:
+				if a in text_labels:
 					li = text_labels.index(a)
-					#print('label index= %r' % repr(li))
-				except ValueError:
+					t = True
+				elif a in data_labels:
+					li = data_labels.index(a)
+					t = False
+				else:
 					raise ASMError('Label %r not found' % a)
+					#print('label index= %r' % repr(li))
 				if re.match('j', cmd[0]): # jump uses a direct address
 					# index * number of bytes per instruction + starting address
 					# right shift 2 bits to fit in 26-bit 'pseudo address'
-					args[i] = str(int((li*4+text_start_addr)/4))
+					if t:
+						args[i] = str(int((li*4+text_start_addr)/4))
+					else:
+						ASMError('Trying to jump to a data address')
+						#args[i] = str(int((li*4+data_start_addr)/4))
 				elif re.match('b', cmd[0]): # branch uses an offset
-					args[i] = str(li - linenum - 1)
+					if t:
+						args[i] = str(li - linenum - 1)
+					else:
+						raise ASMError('Trying to branch to a data address')
+				else: # default to index value * 4 for instruction address
+					#args[i] = str(li)
+					args[i] = str(li*4)
 			else:
 				try:
 					args[i] = '$' + str(regs.index(a))
@@ -157,6 +255,12 @@ def translate_cmd(line, linenum):
 		cmd[1:] = args
 	return cmd
 
+def clean_line(line):
+	#line = re.sub('^\w+:', '', line)
+	line = re.sub('[,\(\)]', ' ', line)
+	line = re.sub('#.*', '', line) # handle in-line comments
+	return re.sub('\s+', ' ', line.strip()) # handle commas and parens
+	
 def parse_cmd(line):
 	'''takes a string and breaks it into a command name and its arguments'''
 	line = re.sub('^\w+:', '', line)
@@ -165,11 +269,6 @@ def parse_cmd(line):
 	return re.split('\s+', line.strip())
 	
 def parse_cmd_fmt(line):
-	#line = re.sub('#.*', '', line) # handle in-line comments
-	#line = re.sub(',', ' ', line) # handle commas
-	#line = re.sub('\$\w+', '$', line) # register args indicated with just '$'
-	#line = re.sub('\w+(?=$)', 'i', line) # immediate values indicated with 'i'
-	#return re.split('\s+', line.strip())
 	fmt = parse_cmd(line)
 	if len(fmt) != 1:
 		args = fmt[1:]
@@ -209,20 +308,21 @@ def get_encoding(asm, linenum, isa):
 	'''
 	isa_key, binstr = find_cmd(asm, isa)
 	if isa_key:
+		#if re.match('[01]+', isa_value): # single, non-pseudo instruction
 		isa_cmd = parse_cmd(isa_key)
 		asm_cmd = translate_cmd(asm, linenum)
 		print(asm_cmd)  if debug else None
-		#print(binstr)
 	else:
 		raise ASMError('Command not found: ' + asm)
-		#print('Command not found: ' + asm)
-		#return None
 	for asm_arg, isa_arg in zip(asm_cmd[1:], isa_cmd[1:]):
 		binstr = put_arg(re.sub('\$', '', asm_arg),
 						re.sub('\$', '', isa_arg),
 						binstr)
 	return re.sub('-', '0', binstr) # replace don't cares ('-') with zeros
 
+#def pseudo2real(asm, isa_value):
+	
+	
 def put_arg(val, sym, binstr):
 	global debug
 	#print('val=%r\tsym=%r\tbinstr=%r' % (val,sym,binstr))

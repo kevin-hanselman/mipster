@@ -115,7 +115,7 @@ def main():
 	args.asm.close()
 	args.out.close()
 	tmp.close()
-	#os.remove(tmp.name)
+	os.remove(tmp.name)
 	print('Assembler successful!')
 
 def asm2basic(infile, outfile, isa):
@@ -127,12 +127,19 @@ def asm2basic(infile, outfile, isa):
 			continue
 		m = re.match('\.\w+', line)
 		if m:
-			text = m.group(0) == '.text'
-			#continue
+			if m.group(0) == '.text':
+				text = True
+				data = False
+			elif m.group(0) == '.data':
+				data = True
+				text = False
 		if text:
 			isa_key, isa_val = find_cmd(line, isa)
 			if isa_val:
 				if re.match('[^01]', isa_val):
+					m = re.match('\w+:', line)
+					if m:
+						outfile.write(m.group(0) + '\n')
 					cmds = pseudo2real(line, isa_key, isa_val)
 					print(cmds) if debug else None
 					for c in cmds:

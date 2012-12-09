@@ -169,8 +169,10 @@ def get_labels(infile):
 			elif m.group(0) == '.data':
 				data = True
 				text = False
+			elif data:
+				data_labels.extend([None for x in re.split('\s+', line)[1:] if x])
 			continue
-		if skip:
+		if skip and text:
 			skip = False
 			continue
 		m = re.match('(\w+):($)?', line)
@@ -179,11 +181,15 @@ def get_labels(infile):
 				skip = False
 			elif not m.group(2): # if matched EOL, label goes w/ next line, skip
 				skip = True
-			#print('skip= %r' % skip) if debug else None
 			if data:
+				try:
+					data_labels.pop() if not data_labels[-1] else None
+				except IndexError:
+					pass
 				data_labels.append(m.group(1))
 				# add Nones for each data element
-				data_labels.extend([None for x in re.split('\s+', line)[3:] if x])
+				if not skip:
+					data_labels.extend([None for x in re.split('\s+', line)[2:] if x])
 			else: # default to .text segment, even if not explicitly declared
 				text_labels.append(m.group(1))
 		else:
@@ -252,7 +258,6 @@ def translate_cmd(line, linenum):
 					else:
 						raise ASMError('Trying to branch to a data address')
 				else: # default to index value * 4 for instruction address
-					#args[i] = str(li)
 					args[i] = str(li*4)
 			else:
 				try:

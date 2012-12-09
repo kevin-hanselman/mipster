@@ -62,3 +62,4 @@ blt $s $t a=slt $1 $s $t;bne $1 $0 a
 bgt $s $t a=slt $1 $t $s;bne $1 $0 a
 bge $s $t a=slt $1 $s $t;beq $1 $0 a
 la $s $t=addi $s $t 0
+bnez $s a=bne $s $0 a

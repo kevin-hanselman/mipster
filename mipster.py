@@ -132,7 +132,7 @@ def main():
 	args.out.close()
 	tmp.close()
 	os.remove(tmp.name)
-	print('data_seg = %r' % data_seg)
+	print('data_seg = %r' % data_seg) if debug else None
 	print('Assembler successful!')
 
 def asm2basic(infile, outfile, isa):

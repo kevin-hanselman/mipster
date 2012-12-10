@@ -10,12 +10,12 @@ import os.path
 import io
 import re
 import collections
-import sys
 import tempfile
 
 text_start_addr = 0x00400000 # starting address for the .text segment
 data_start_addr = 0x00001001 # starting address for the .data segment
 
+data_seg = []
 data_labels = [] # holds each label in the .data segment of ASM file, indexed by line number
 text_labels = [] # holds each label in the .text segment of ASM file, indexed by line number
 
@@ -38,26 +38,33 @@ def main():
 	global debug
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument('-v', '--version', action='version',
-						version='%(prog)s 0.2')
-	parser.add_argument('-d', '--debug', action='store_true',
+						version='%(prog)s 0.3')
+	parser.add_argument('-D', '--Debug', action='store_true',
 						help='output debug information')
 	parser.add_argument('asm',	help='MIPS assembly input file',
 						type=argparse.FileType('r'))
 	parser.add_argument('-o', '--out',
 						metavar='HEX',
-						help='name of the output file',
+						help='name of the text segment output file',
+						type=argparse.FileType('w'))
+	parser.add_argument('-d', '--data',
+						metavar='HEX',
+						help='name of the data segment output file',
 						type=argparse.FileType('w'))
 #	parser.add_argument('-c', metavar='MARS',
 #						help='compare output to MARS hex file',
 #						type=argparse.FileType('r'))
 	args = parser.parse_args()
-	debug = args.debug
+	debug = args.Debug
 	isa = get_mips_isa() # make a dictionary of ISA commands and their encodings
 
 	# form the output file if not supplied
 	if not args.out:
-		args.out = open(os.path.splitext(args.asm.name)[0] + '.hex', 'w')
+		args.out = open(os.path.splitext(args.asm.name)[0] + '_txt.hex', 'w')
 	
+	if not args.data:
+		args.data = open(os.path.splitext(args.asm.name)[0] + '_dat.hex', 'w')
+
 	#tmp = tempfile.NamedTemporaryFile('r+', delete=False)
 	tmp = open(os.path.splitext(args.asm.name)[0] + '.tmp', 'w+')
 	
@@ -65,16 +72,20 @@ def main():
 		asm2basic(args.asm, tmp, isa)
 		tmp.seek(0)
 		get_labels(tmp)
-	except ASMError as ex:
+	except Exception as ex:
 		args.asm.close()
 		args.out.close()
+		args.data.close()
 		tmp.close()
 		#os.remove(tmp.name)
 		os.remove(args.out.name)
-		print(ex)
-		return
+		os.remove(args.data.name)
+		if isinstance(ex, ASMError):
+			print(ex)
+			return
+		else:
+			raise
 	
-	#return
 	tmp.seek(0)
 
 	# create hex output
@@ -98,24 +109,30 @@ def main():
 		except Exception as ex:
 			args.asm.close()
 			args.out.close()
+			args.data.close()
 			tmp.close()
 			#os.remove(tmp.name)
 			os.remove(args.out.name)
+			os.remove(args.data.name)
 			if isinstance(ex, ASMError):
 				print(ex)
 				return
 			else:
 				raise
-			#sys.exit('Unexpected Error:' + str(sys.exc_info()[0]))
 		if binstr:
 			hexstr = binstr2hexstr(binstr)
 			print('%s -> %s' % (hexstr, binstr)) if debug else None
 			args.out.write(hexstr + '\n')
 		j += 1
+	
+	for n in data_seg:
+		args.data.write(int2hexstr(int(n)) + '\n')
+	
 	args.asm.close()
 	args.out.close()
 	tmp.close()
 	os.remove(tmp.name)
+	print('data_seg = %r' % data_seg)
 	print('Assembler successful!')
 
 def asm2basic(infile, outfile, isa):
@@ -123,7 +140,6 @@ def asm2basic(infile, outfile, isa):
 	for i, line in enumerate(infile):
 		line = clean_line(line)
 		if re.match('(?:#.*)?$', line): # skip comments and blank lines
-			#print('skipping %r' % line) if debug else None
 			continue
 		m = re.match('\.\w+', line)
 		if m:
@@ -145,12 +161,7 @@ def asm2basic(infile, outfile, isa):
 					for c in cmds:
 						outfile.write(c + '\n')
 					continue
-				#else:
-					#outfile.write(' '.join(parse_cmd(line)) + '\n')
-					#continue
 		outfile.write(line + '\n')
-			#else:
-				#raise ASMError('Command %r not found' % line)
 
 def get_labels(infile):
 	skip = False
@@ -170,6 +181,7 @@ def get_labels(infile):
 				data = True
 				text = False
 			elif data:
+				data_seg.extend([x for x in re.split('\s+', line)[1:] if x.isdigit()])
 				data_labels.extend([None for x in re.split('\s+', line)[1:] if x])
 			continue
 		if skip and text:
@@ -189,6 +201,7 @@ def get_labels(infile):
 				data_labels.append(m.group(1))
 				# add Nones for each data element
 				if not skip:
+					data_seg.extend([x for x in re.split('\s+', line)[2:] if x.isdigit()])
 					data_labels.extend([None for x in re.split('\s+', line)[2:] if x])
 			else: # default to .text segment, even if not explicitly declared
 				text_labels.append(m.group(1))
@@ -268,7 +281,6 @@ def translate_cmd(line, linenum):
 	return cmd
 
 def clean_line(line):
-	#line = re.sub('^\w+:', '', line)
 	line = re.sub('[,\(\)]', ' ', line)
 	line = re.sub('#.*', '', line) # handle in-line comments
 	return re.sub('\s+', ' ', line.strip()) # handle commas and parens
